@@ -264,8 +264,12 @@ def sprint(sprint_groups, cards, df, winner_time, result, latest_pt, sprint_type
                 cards_available = []
 
                 tk_penalty = 0
+                if sprint_type in [0,1]:
+                    sprint_value = 2
+                if sprint_type == 2:
+                    sprint_value = 1
                 for i in range(0, min(4, len(cards[rider]['cards']))):
-                    cards_available.append(cards[rider]['cards'][i][sprint_type])
+                    cards_available.append(cards[rider]['cards'][i][sprint_value])
 
                 for i in range(4, min(8, len(cards[rider]['cards']))):
                     if cards[rider]['cards'][i][0] == 'kort: 16':
@@ -821,8 +825,8 @@ def nyehold(df, track, number_of_teams, riders_per_team, puncheur, same=False):
 
     #assign favorit
     track21 = min(get_value(track), 7) / max(get_value(track), 7)
-    rdf['fav_points'] = (rdf['BJERG'] - 60) * get_value(track) + rdf[
-        'SPRINT'] * 10 + (rdf['BJERG 3'] - 21) * 2 * get_value(track[-15::]) + (rdf['BJERG 3'] - 21) * 3 * track21 + (rdf['FLAD']-60) * (200 / (get_value(track[-17::])+1) )
+    rdf['fav_points'] = (rdf['BJERG'] - 60) * get_value(track) * get_longest_hill(track)**0.5+ rdf[
+        'SPRINT'] * 15 + (rdf['BJERG 3'] - 21) * 2 * get_value(track[-15::]) + (rdf['BJERG 3'] - 21) * 3 * track21 + (rdf['FLAD']+rdf['SPRINT']-65) * (50 / (get_value(track[-17::])+1) )
     rdf = rdf.sort_values(by='fav_points', ascending=True)
     rdf['favorit'] = range(1, peloton_size+1)
     rdf['favorit'] = rdf['favorit'] / (peloton_size/9)
@@ -1520,9 +1524,9 @@ def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, 
 
 
         if not takes_lead:
-            if sv < 2:
-                if sel_card_number < 6:
-                    ecs = 1
+            #if sv < 2:
+            if sel_card_number < 6:
+                ecs = 1
 
         #ecs = ecs + penalty
         if rider['attacking_status'] == 'attacker':
@@ -1848,8 +1852,10 @@ if st.session_state.play_round:
 
                 if gruppefart > 6:
                     sv = 3
-
-            st.write('group ' + str(group) + "'s speed is " + str(gruppefart), '. SV is:', str(sv) + '. You have to move at least' + str(gruppefart-sv))
+            sv2 = sv
+            if sv == 2:
+                sv2 = 3
+            st.write('group ' + str(group) + "'s speed is " + str(gruppefart), '. SV is:', str(sv2) + '. You have to move at least' + str(gruppefart-sv2))
 
             #st.write([gruppefart + group_position, sv], 'gets appended gto groups_new_posts')
             st.session_state.groups_new_positions.append([gruppefart + group_position, sv])
