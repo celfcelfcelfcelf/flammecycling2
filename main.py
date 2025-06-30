@@ -21,6 +21,14 @@ if "teams" not in st.session_state:
 if "number_of_teams" not in st.session_state:
     st.session_state['number_of_teams'] = 3
 
+if "stages" not in st.session_state:
+    st.session_state['stages'] = []
+
+if "no_of_stages" not in st.session_state:
+    st.session_state['no_of_stages'] = 0
+
+if "hill_type" not in st.session_state:
+    st.session_state['hill_type'] = 'normal'
 
 if "latest_prel_time" not in st.session_state:
     st.session_state['latest_prel_time'] = -5
@@ -29,6 +37,9 @@ if "latest_prel_time" not in st.session_state:
 
 if "groups_new_positions" not in st.session_state:
     st.session_state.groups_new_positions = []
+
+if "udbrud_start" not in st.session_state:
+    st.session_state.udbrud_start = 5
 
 if "result" not in st.session_state:
     st.session_state.result = []
@@ -134,6 +145,15 @@ def get_points(df, level):
 def has_numbers(inputString):
     return bool(re.search(r'\d', inputString))
 
+def get_team_mates_in_group(rider):
+    team_mates = []
+    for rider2 in st.session_state.cards:
+        if st.session_state.cards[rider2]['team'] == st.session_state.cards[rider]['team']:
+            if st.session_state.cards[rider2]['group'] == st.session_state.cards[rider]['group']:
+                if rider2 != rider:
+                    team_mates.append(rider2)
+    return team_mates
+
 def convert_to_seconds(number):
 
     #number = number ## + random.randint(int(-number**+.5),int(number**+.5))
@@ -157,12 +177,16 @@ def convert_to_seconds_plain(number):
 def get_slipstream_value(pos1, pos2, track):
     pos1 = int(pos1)
     pos2 = int(pos2)
+    if track[pos1] == '_': #NYNEDAD
+        return 1
     if '0' in track[pos1:pos2+1]:
         return 0
     if '1' in track[pos1:pos2+1]:
         return 1
-    else:
+    if '2' in track[pos1:pos2+1]:
         return 2
+    else:
+        return 3
 
 def tjek_stejl(pos1, pos2, track):
     pos1 = int(pos1)
@@ -174,12 +198,40 @@ def tjek_stejl(pos1, pos2, track):
 
 generate = False
 
+def get_weighted_value(track, factor=0.5):
+    #st.write(track)
+    tr = track[0:track.find('F') + 1]
+    tr = tr[0:tr.index('F')]
+    tr=tr[::-1]
+    tr = tr.replace('_', '3')
 
+    tr = list(tr)
+
+
+    #st.write(tr)
+    sum = 0
+    i = 1
+    total_sum=0
+
+    for number in tr:
+        #st.write(number)
+        if int(number) == 0:
+            number = 0.5
+        number = float(number)*2/3
+        sum = (number*(1/i)**factor)  + sum
+        total_sum = total_sum + (1/i)**factor
+        #col4.write(total_sum)
+        i = 1+i
+    #col4.write(sum, total_sum)
+    try:
+        return sum / total_sum
+    except:
+        return 3
 def get_value(track):
     #st.write(track)
     tr = track[0:track.find('F') + 1]
 
-    tr = tr.replace('_', '2')
+    tr = tr.replace('_', '3')
 
     tr = list(tr)
 
@@ -188,14 +240,20 @@ def get_value(track):
     sum = 0
     for number in tr:
         #st.write(number)
-        sum = int(number) + sum
+        sum = float(number) * 2/3 + sum
+        #sum = sum * 2 / 3 #fordi gået fra 2 til 3 i SV.
     #st.write('success')
-    return 100*(2 - sum / len(tr))**2
+    try:
+        return 100*(2 - sum / len(tr))**2
+
+    except:
+        return 100
 
 def get_length(track):
     tr = track[0:track.find('F') + 1]
-    tr = tr.replace('2', '6')
+    tr = tr.replace('3', '6')
     tr = tr.replace('_', '9')
+    tr = tr.replace('2', '4')
     tr = tr.replace('1', '3')
     tr = tr.replace('0', '2')
 
@@ -226,6 +284,50 @@ def get_length(track):
 
     sum = sum / 6
     return int(sum)
+
+def get_group_size(group):
+    i = 0
+    for rider in st.session_state.cards:
+        if st.session_state.cards[rider]['group'] == group:
+            i = 1+i
+    return i
+def get_e_move_left(rider, cards, track):
+
+    group_size = get_group_size(rider['group'])
+    length_left = len(track[rider['position']:track.find('F')])
+
+
+    diff_left = 2-get_weighted_value(track[rider['position']::])
+
+    av_speed = 5 - 0.15*(diff_left * (70-rider['bjerg'])) - 1.5*rider['fatigue']
+    track_value = 100*0.2+0.8*(100-get_value(track[rider['position']::]))
+
+    moves_left = length_left / (av_speed+0.001*track_value*group_size**0.5)
+    return moves_left
+
+def get_favorit_points(rider):
+    #factor = (get_weighted_value(st.session_state.track) - 0.3)*0.06
+    return 1/(1.5 + rider['e_moves_left'])
+
+def get_total_moves_left(cards, factor):
+    sum = 0
+    for rider in cards:
+        sum = sum + cards[rider]['favorit_points']**factor
+    return sum
+
+
+def get_win_chance_wo_sprint(rider, sum, factor):
+    return 100 * (rider['favorit_points'] ** factor / sum)
+
+
+
+def get_win_chance(rider, sum, factor, sprint_weight):
+
+    return (1-sprint_weight) * (rider['win_chance_wo_sprint'])+ (sprint_weight)*rider['sprint_chance']
+
+
+
+
 
 
 def detect_sprint_groups(df):
@@ -264,9 +366,9 @@ def sprint(sprint_groups, cards, df, winner_time, result, latest_pt, sprint_type
                 cards_available = []
 
                 tk_penalty = 0
-                if sprint_type in [0,1]:
+                if sprint_type in [0,1,2]:
                     sprint_value = 2
-                if sprint_type == 2:
+                if sprint_type == 3:
                     sprint_value = 1
                 for i in range(0, min(4, len(cards[rider]['cards']))):
                     cards_available.append(cards[rider]['cards'][i][sprint_value])
@@ -334,9 +436,180 @@ def transfer_groups(df, dict):
 
     return dict
 
+def pick_value(rider, track, paces):
+    if st.session_state.cards[rider]['takes_lead'] == 0:
+        return 0
+    #favorit = st.session_state.cards[rider]['favorit']
+    if st.session_state.cards[rider]['attacking_status'] == 'attacker':
+        ideal_move = 100
+        uphill = True
 
-def pick_value(rider, track):
+    #if random.random() < favorit * 1.5 / 100:
+        #ideal_move = 100
 
+    #random.shuffle(rider['cards'])
+
+    # for card in rider['cards'][0:4]:
+    # st.write(str(card[0]) + '-' + str(card[1]) + '-' + str(card[2]))
+
+    else:
+        track_length = track.find('F')
+        len_left = track_length  - st.session_state.cards[rider]['position']
+
+        diff_left = len_left / get_length(track)
+
+        # jo længere til mål, jo lavere
+        best_left = max(1,track_length - st.session_state.rdf.position.max())
+
+        ideal_move = (len_left/best_left)**2 + 4
+        #st.write(ideal_move -3  , 'ideal move basis')
+
+
+        ideal_move = ideal_move + takes_lead_fc(rider, st.session_state.rdf, st.session_state.cards[rider]['attacking_status'], st.session_state.number_of_teams, True, False)**0.4
+        ideal_move = ideal_move - len_left / 20
+
+
+        if track[st.session_state.cards[rider]['position']] == '_':
+            if ideal_move < 7.2:
+                ideal_move = -10
+
+        #/// check if correct
+        #if '0' in track[rider['position']:rider['position']+7]:
+        #    ideal_move = ideal_move / 2 + (1.5 * diff_left)
+        #    uphill = True
+
+        #if '1' in track[rider['position']:rider['position']+7]:
+        #    ideal_move = (1.5 * diff_left) + ideal_move / 2
+        #    uphill = True
+
+
+
+    #col1.write(rider + 'ideal_move: ' + str(int(ideal_move)))
+    # st.write(rider)
+    # st.write(ideal_move)
+    sv = get_slipstream_value(st.session_state.cards[rider]['position'],st.session_state.cards[rider]['position'] + int(ideal_move), track)
+    pvs = get_pull_value(paces, sv)
+
+    if int(ideal_move) <= pvs[0]:
+        if sv == 3 and pvs[1] == 1:
+            print('sv3pvs1')
+        else:
+            #st.write('ideal_move', ideal_move, ' not enough')
+            return 0
+
+    selected = st.session_state.cards[rider]['cards'][0]
+
+    penalty = 0
+
+    for card in st.session_state.cards[rider]['cards'][0:4]:
+
+        #st.write(card[1], 'in pick_value')
+
+        if card[1] == -1:
+            penalty = 1
+
+    error = 1000
+    # find det rigtige kort
+    for card in st.session_state.cards[rider]['cards'][0:4]:
+        sv = get_slipstream_value(st.session_state.cards[rider]['position'],
+                                  st.session_state.cards[rider]['position'] + card[1], track)
+        if sv < 3:
+
+            value = card[2] - penalty
+            error_card = abs(value - ideal_move) ** 2 + card[2] / 100
+            errorTMs = 0
+            for team_mate in get_team_mates_in_group(rider):
+
+                errorTM = 25
+                penalty = get_penalty(team_mate)
+                for card in st.session_state.cards[team_mate]['cards'][0:4]:
+                    value_tm = card[2] - penalty
+                    errorTMcard = abs(value - value_tm + sv)
+                    if errorTMcard < errorTM:
+                        errorTM = errorTMcard
+
+                errorTM = errorTM * st.session_state.cards[team_mate]['win_chance'] / 100
+
+                print(team_mate, errorTM)
+                errorTMs = errorTM + errorTMs
+
+            len_left = track_length - st.session_state.cards[rider]['position']
+            error_total = 4 * error_card / len_left + errorTMs
+            print(rider, error_card / len_left, errorTMs)
+
+            if error_total < error:
+                selected = card
+                error = error_total
+            ##gammel if abs(value - ideal_move) + card[2] / 100 < abs(selected[2] - ideal_move) + selected[1] / 100:
+            ## gammel selected = card
+
+        else:
+            value = card[1] - penalty
+
+            error_card = abs(value - ideal_move) ** 2 + card[2] / 100
+            errorTMs = 0
+            for team_mate in get_team_mates_in_group(rider):
+
+                errorTM = 25
+                penalty = get_penalty(team_mate)
+                for card in st.session_state.cards[team_mate]['cards'][0:4]:
+                    value_tm = card[1] - penalty
+                    errorTMcard = abs(value - value_tm + sv)
+                    if errorTMcard < errorTM:
+                        errorTM = errorTMcard
+
+                errorTM = errorTM * st.session_state.cards[team_mate]['win_chance'] / 100
+
+                print(team_mate, errorTM)
+                errorTMs = errorTM + errorTMs
+
+            len_left = track_length - st.session_state.cards[rider]['position']
+            error_total = error_card / len_left + errorTMs
+            print(rider, error_card / len_left, errorTMs)
+
+            if error_total < error:
+                selected = card
+                error = error_total
+
+
+
+    #if uphill == False:
+    #    print(rider['cards'][0:4])
+    #    for card in rider['cards'][0:4]:
+    #        value = card[1]-penalty
+    #        print(abs(card[1] - ideal_move))
+    #        print(abs(selected[1] - ideal_move))
+
+    #        if abs(value - ideal_move) < abs(selected[1] - ideal_move):
+    #            print('yes')
+    #            selected = card
+                #print('selected' + selected)
+
+    # st.write('selected=' + str(selected[0]))
+
+    #rider['played_card'] = selected
+    #rider['cards'].remove(selected)
+    #st.write(rider, selected)
+    #//// selected must be either number 1 or 2
+    if sv == 3:
+        selected = selected[1]
+
+    else:
+        selected = selected[2]
+
+    if selected <= get_pull_value(paces, sv)[0]:
+        if sv == 3 and pvs[1] == 1:
+            print('sv3pvs1')
+        else:
+            st.write('selected', selected, ' not enough')
+            return 0
+
+    return selected - penalty
+
+def pick_value_old(rider, track):
+    if rider['takes_lead'] == 0:
+        return 0
+    
     favorit = rider['favorit']
     if rider['attacking_status'] == 'attacker':
         ideal_move = 100
@@ -363,7 +636,7 @@ def pick_value(rider, track):
 
 
         if track[rider['position']] == '_':
-            ideal_move = -10
+            ideal_move = ideal_move - 2 #NYNEDAD
         #/// check if correct
         #if '0' in track[rider['position']:rider['position']+7]:
         #    ideal_move = ideal_move / 2 + (1.5 * diff_left)
@@ -384,28 +657,36 @@ def pick_value(rider, track):
     penalty = 0
 
     for card in rider['cards'][0:4]:
+
         #st.write(card[1], 'in pick_value')
 
         if card[1] == -1:
             penalty = 1
 
-    if uphill == True:
-        for card in rider['cards'][0:4]:
+    for card in rider['cards'][0:4]:
+        sv = get_slipstream_value(rider['position'],rider['position'] + card[1], track)
+        if sv < 2:
             value = card[2] - penalty
-            if abs(value - ideal_move) + card[1] / 100 < abs(selected[2] - ideal_move) + selected[1] / 100:
+            if abs(value - ideal_move) + card[2] / 100 < abs(selected[2] - ideal_move) + selected[1] / 100:
                 selected = card
-                print(selected)
 
-    if uphill == False:
-        print(rider['cards'][0:4])
-        for card in rider['cards'][0:4]:
-            value = card[1]-penalty
-            print(abs(card[1] - ideal_move))
-            print(abs(selected[1] - ideal_move))
-
-            if abs(value - ideal_move) < abs(selected[1] - ideal_move):
-                print('yes')
+        else:
+            value = card[1] - penalty
+            if abs(value - ideal_move) + card[1] / 100 < abs(selected[1] - ideal_move) + selected[1] / 100:
                 selected = card
+
+
+
+    #if uphill == False:
+    #    print(rider['cards'][0:4])
+    #    for card in rider['cards'][0:4]:
+    #        value = card[1]-penalty
+    #        print(abs(card[1] - ideal_move))
+    #        print(abs(selected[1] - ideal_move))
+
+    #        if abs(value - ideal_move) < abs(selected[1] - ideal_move):
+    #            print('yes')
+    #            selected = card
                 #print('selected' + selected)
 
     # st.write('selected=' + str(selected[0]))
@@ -414,7 +695,7 @@ def pick_value(rider, track):
     #rider['cards'].remove(selected)
     #st.write(rider, selected)
     #//// selected must be either number 1 or 2
-    if track[rider['position']:rider['position']+selected[1]] == '2' * selected[1]:
+    if get_slipstream_value([rider['position'],rider['position']+selected[1]], track) == 2:
         selected = selected[1]
 
     else:
@@ -451,7 +732,7 @@ def colour_track(track):
         if ned_igen == -1:
             ned_igen = 1000
 
-        ned_igen2 = track2[stigning:].find('2')
+        ned_igen2 = track2[stigning:].find('3')
         if ned_igen2 == -1:
             ned_igen2 = 1000
 
@@ -481,7 +762,7 @@ def colour_track(track):
         track2 = track2[0:nedad] + ':blue[' + track2[nedad:]
         # print(track2)
 
-        ned_igen = track2[nedad:].find('2')
+        ned_igen = track2[nedad:].find('3')
         if ned_igen == -1:
             ned_igen = 1000
 
@@ -557,10 +838,13 @@ def transfer_positions(dict,df, include_played_card=False):
         if include_played_card==True:
             df.loc[df['NAVN'] == rider, 'played_card'] = dict[rider]['played_card'][0]
         df.loc[df['NAVN'] == rider, 'takes_lead'] = dict[rider]['takes_lead']
+        df.loc[df['NAVN'] == rider, 'win_chance'] = dict[rider]['win_chance']
         #st.write(dict[rider]['played_card'][0])
         #df[df['NAVN' == rider]]['position'] = dict[rider]['position']
         #i = 1 + i
+
     return(df)
+
 
 def rankings_from_dict_to_df(dict,df):
     #df = df.sort_values(by='index', ascending=True)
@@ -582,6 +866,7 @@ def from_dict_to_df(dict,df):
         dict[rider]['played_card'] = 0
         dict[rider]['group'] = df[df['NAVN']==rider]['group'].tolist()[0]
         dict[rider]['favorit'] = df[df['NAVN'] == rider]['favorit'].tolist()[0]
+
 
         #df[df['NAVN' == rider]]['position'] = dict[rider]['position']
         #i = 1 + i
@@ -609,12 +894,15 @@ def assign_new_group_numbers(df, cards):
 
 
 def get_longest_hill(track):
-    longest = 0
+    longest = 1
     current = 0
     for i in track:
         if i in ['0','1']:
             current = 1 + current
         if i == '2':
+            current = 0.5 + current
+
+        if i == '3':
             current = 0
         if i == '_':
             current = 0
@@ -622,7 +910,284 @@ def get_longest_hill(track):
 
     return longest
 
-def takes_lead_fc(rider, df, attacking_status, number_of_teams):
+
+def get_random_track():
+    track = str(max(random.randint(0, 3), random.randint(0, 3)))
+    ned = 0
+    if track == '2' and random.random() > 0.4:
+        track = '1'
+    for i in range(0, 55 + random.randint(0, 6) + random.randint(0, 6)):
+
+        if track[i] == '_' and random.random() < ned * 0.15:
+            track = track + '_'
+
+        elif track[i] != '_' and random.random() > (0.5 - int(track[i]) * 0.1):
+
+            track = track + track[i]
+
+
+        else:
+
+            a = random.random()
+            if a < 0.03:
+                track = track + '0'
+                ned = ned +1
+            elif a < 0.25:
+                track = track + '1'
+                ned = ned + 1
+            elif a < 0.32:
+                track = track + '2'
+                ned = ned + 0.5
+            elif a < 0.62 and track[i] != '3':
+                track = track + '_'
+                ned = ned - 1.5
+            else:
+                track = track + '3'
+                ned = 0
+
+    track = track + 'FFFFFFFFFFF'
+    st.write(track)
+    return track
+
+def takes_lead_fc(rider, df, attacking_status, number_of_teams, floating = False, write=False):
+    if attacking_status == 'attacker':
+        return 1
+
+    group = st.session_state.cards[rider]['group']
+    sdf = df[df['group'] == group]
+    group_size = sdf.shape[0]
+    teams_in_group = sdf.team.nunique()
+    len_left = track.find('F') - st.session_state.cards[rider]['position']
+    best_sel_card = 100
+    favorit = (st.session_state.cards[rider]['favorit']+2)
+
+    team = df[df['NAVN'] == rider]['team'].tolist()[0]
+    sprint = df[df['NAVN'] == rider]['SPRINT'].tolist()[0]
+    fra_team_i_gruppe = sdf[sdf.team == team].shape[0]
+    ratio = fra_team_i_gruppe / group_size
+    sv = get_slipstream_value(st.session_state.cards[rider]['position'], st.session_state.cards[rider]['position'] + 8,
+                         track)
+
+
+    if ratio == 1:
+        if floating == False:
+            return 1
+        else:
+            return 6
+
+    bjerg = df[df['NAVN'] == rider]['BJERG'].tolist()[0]
+    flad = df[df['NAVN'] == rider]['FLAD'].tolist()[0]
+
+    fb_ratio = (flad / bjerg) **2
+    if sv < 2:
+        fb_ratio = 1/fb_ratio
+
+    mentalitet = df[df['NAVN'] == rider]['MENTALITET'].tolist()[0]
+
+    for card in st.session_state.cards[rider]['cards'][0:4]:
+        best_sel_card = min(best_sel_card, int(card[0][-2:-1] + card[0][-1]))
+
+
+    #st.write(attack_prob, 'attack_prob')
+
+    if group_size > 2:
+        if attacking_status != 'attacked':
+
+            attack_prob_percent = 0.25
+            if len(st.session_state.attackers_in_turn) > 0:
+                attack_prob_percent = attack_prob_percent*4
+
+            if ratio > 0.4999:
+                attack_prob_percent = attack_prob_percent * (ratio / 0.4) ** 8
+
+            attack_prob_percent = attack_prob_percent * ((20/len_left) ** (favorit/5))**0.5
+            #st.write(rider, 'attack_prob', attack_prob_percent)
+            attack_prob_percent = attack_prob_percent / (best_sel_card)
+            #st.write(rider, '1attack_prob', attack_prob_percent)
+            attack_prob_percent = attack_prob_percent / (group ** 1.45 )
+            #st.write(rider, '2attack_prob', attack_prob_percent)
+            attack_prob_percent = attack_prob_percent / (max(1,sv)**(favorit/5))
+            #st.write(rider, '3attack_prob', attack_prob_percent, (max(1,sv)**(favorit/5)))
+            attack_prob_percent = attack_prob_percent / len(df) * 9
+            attack_prob_percent = attack_prob_percent * (mentalitet / 4)
+            attack_prob_percent = attack_prob_percent * fb_ratio
+
+
+            #attack_prob_percent = attack_prob_percent * ((group_size ** 1.5)/2
+            attack_prob = int(1/attack_prob_percent) + 1
+
+
+            #st.write(rider, 'attack_prob', attack_prob)
+            if random.randint(0, attack_prob) == 1:
+
+                if group_size > 2:
+                    if floating == False:
+
+                        st.write(rider, 'attacksy')
+                        return 2
+
+    takes_lead = 0
+    prob_front = 0
+    prob_team_front = 0
+    prob_group = 0
+    prob_team_back = 0
+    prob_team_group = 0
+    prob_back = 0
+    team = st.session_state.cards[rider]['team']
+    prob_others_front = 0
+    back_own_team_sh = 0
+    front_own_team_sh = 0
+    team_members_in_group = 0
+
+    for rider2 in st.session_state.cards:
+        if st.session_state.cards[rider2]['group'] == group:
+
+            if st.session_state.cards[rider2]['team'] == team:
+                prob_team_group = prob_team_group + st.session_state.cards[rider2]['win_chance'] / 100
+                prob_group = prob_group + st.session_state.cards[rider2]['win_chance'] / 100
+                team_members_in_group = team_members_in_group + 1
+            else:
+                prob_group = prob_group + st.session_state.cards[rider2]['win_chance']/ 100
+        if st.session_state.cards[rider2]['group'] < group:
+            if st.session_state.cards[rider2]['team'] == team:
+                prob_team_front = prob_team_front + st.session_state.cards[rider2]['win_chance']/ 100
+                prob_front = prob_front+ st.session_state.cards[rider2]['win_chance']/ 100
+            else:
+                prob_front = prob_front + st.session_state.cards[rider2]['win_chance'] / 100
+        if st.session_state.cards[rider2]['group'] > group:
+            if st.session_state.cards[rider2]['team'] == team:
+                prob_team_back = prob_team_back + st.session_state.cards[rider2]['win_chance']/ 100
+                prob_back = prob_back + st.session_state.cards[rider2]['win_chance']/ 100
+            else:
+                prob_back = prob_back + st.session_state.cards[rider2]['win_chance'] / 100
+    print(rider, prob_group, prob_back, prob_front, prob_team_group)
+    prob_teammembers_in_group = prob_team_group - st.session_state.cards[rider]['win_chance']/ 100
+    #st.write()
+    helping_team = prob_team_group / (st.session_state.cards[rider]['win_chance']/ 100)
+
+    if helping_team < team_members_in_group:
+        captain = 1
+    else:
+        captain = 0
+
+    prob_team_group_share = (prob_team_group - 0.1 * st.session_state.cards[rider]['win_chance']/ 100)/ prob_group
+
+
+    chance_tl = 0
+    #helping team, høj hvis man er meget hjælperytter
+
+
+    try:
+        front_own_team_sh = prob_team_front / (prob_front+0.1)
+    except:
+        print('no')
+    try:
+        back_own_team_sh = prob_team_back / (prob_back+0.1)
+    except:
+        print('no')
+
+    #if floating == False:
+    print(rider, 'team: (', st.session_state.cards[rider]['team'], 'prob_team_group', prob_team_group, 'back_wins_team_sh', back_own_team_sh, 'front_wins_team_sh', front_own_team_sh, 'helping team', helping_team)
+    #chance_tl = 1
+
+    #hvis dem foran har høj sandsynlighed. Og eget hold har lavere sandsynlighed.
+    #Eller Hvis dem bagved har høj sandsynlighed. Og eget hold har lav sandsynlighed.
+    #Kig hvor eget hold har størst sandsynlighed. Foran eller bagved.
+
+    #Høj hastighed hvis høj (max prob_front, prob_back)
+    #Høj hastighed hvis egen høj sandsynlighed i gruppen.
+    #Høj hastighed hvis hjælperytter til stede.
+    #if prob_team_group > max(prob_team_front,prob_team_back):
+    #    benchmark = back_own_team_sh
+    #else:
+    #    benchmark = front_own_team_sh
+
+####CALCULATE TAKE LEAD
+    if prob_team_group_share > front_own_team_sh:
+            #høj hvis man er favorit i gruppen
+        chance_tl = ((prob_team_group_share - prob_team_front) * st.session_state.number_of_teams)**2
+
+        if st.session_state.cards[rider]['attacking_status'] == 'attacked':
+            chance_tl2 = chance_tl * (25/len_left)
+            favort = 0
+            for rider in st.session_state.attackers_in_turn:
+                favorit = favorit + st.session_state.cards[rider].favorit
+
+            chance_tl2 = chance_tl2 * (favorit / 5)
+
+            chance_tl = max(chance_tl2,chance_tl)
+            if floating == False:
+
+                col4.caption('blevet angrebet')
+                col4.write(chance_tl)
+
+        if floating == False:
+
+            col4.write(rider + '(' + st.session_state.cards[rider]['team'] + ')'+ 'w_c: ' + str(int(st.session_state.cards[rider]['win_chance'])))
+            col4.caption('er der nogen foran?')
+            col4.write(chance_tl)
+        # høj hvis man er hjælperytter i gruppen
+        chance_tl = chance_tl * ((helping_team-0.5*captain)/team_members_in_group)
+        # men også høj hvis man er kaptain, holdkammerater er trætte og der er bakker.
+        if floating == False:
+            col4.caption('helping team')
+            col4.write(chance_tl)
+
+        if sv < 2 and st.session_state.cards[rider]['bjerg'] > 71:
+            chance_tl2 = chance_tl * (st.session_state.cards[rider]['bjerg']-72)
+            chance_tl2 = chance_tl2 * (10/len_left)
+            chance_tl2 = chance_tl2 * (1/ best_sel_card)**0.5
+            chance_tl = max(chance_tl2, chance_tl)
+            if floating == False:
+                col4.caption('captajn og bakke og sent')
+                col4.write(chance_tl)
+
+
+        #up hvis man har mange holdkammerater i gruppen
+        chance_tl = chance_tl * ((team_members_in_group - captain) / (group_size / teams_in_group))
+        if floating == False:
+            col4.caption('er der mange holdkammerater?')
+            col4.write(chance_tl)
+        #op hvis dem foran eller bagved har høj sandsynlighed
+        chance_tl = chance_tl * (max(1/number_of_teams, prob_front - prob_team_front*number_of_teams, prob_back-prob_team_back*number_of_teams) * number_of_teams)**2
+        if floating == False:
+            col4.caption('er der fare på færde fra dem foran?')
+            col4.write(chance_tl)
+            #chance_tl = chance_tl * (st.session_state.number_of_teams**0.5)
+
+        #ned hvis man ikke har gode kort eller er træt.
+        chance_tl = chance_tl * (1- st.session_state.cards[rider]['fatigue'])**0.5
+        chance_tl = chance_tl * min(1,7/best_sel_card)**2
+        if floating == False:
+            col4.caption('træt og dårlige kort?')
+            col4.write(chance_tl)
+
+        chance_tl = chance_tl * (60/len_left)**0.5
+
+        human = human_responsibility(group, ['Me'], group_size, teams_in_group, number_of_teams, len_left)
+        col4.caption(human)
+        chance_tl = chance_tl / max(1, human)**.5
+
+        if write == True:
+            col4.caption('mennesket')
+            col4.write(chance_tl)
+    else:
+        if floating == False:
+            st.write(rider + ' (' + st.session_state.cards[rider]['team'] + ') - vil ikke føre')
+
+
+    if floating == False:
+        if random.random() > 1/(chance_tl+0.001):
+            takes_lead = 1
+            st.write('TAKES_LEAD')
+            col4.caption('takes leadchy!!')
+
+    if floating == True:
+        takes_lead = chance_tl
+
+    return takes_lead
+
+def takes_lead_fc_old(rider, df, attacking_status, number_of_teams, floating = False):
     if attacking_status == 'attacker':
         return 1
 
@@ -634,32 +1199,56 @@ def takes_lead_fc(rider, df, attacking_status, number_of_teams):
     favorit = (st.session_state.cards[rider]['favorit']+2)
 
     team = df[df['NAVN'] == rider]['team'].tolist()[0]
+    sprint = df[df['NAVN'] == rider]['SPRINT'].tolist()[0]
     fra_team_i_gruppe = sdf[sdf.team == team].shape[0]
     ratio = fra_team_i_gruppe / group_size
+    sv = get_slipstream_value(st.session_state.cards[rider]['position'], st.session_state.cards[rider]['position'] + 8,
+                         track)
+
+
     if ratio == 1:
         return 1
+
+    bjerg = df[df['NAVN'] == rider]['BJERG'].tolist()[0]
+    flad = df[df['NAVN'] == rider]['FLAD'].tolist()[0]
+
+    fb_ratio = (flad / bjerg) **2
+    if sv < 2:
+        ratio = 1/ratio
+
+    mentalitet = df[df['NAVN'] == rider]['MENTALITET'].tolist()[0]
 
     for card in st.session_state.cards[rider]['cards'][0:4]:
         best_sel_card = min(best_sel_card, int(card[0][-2:-1] + card[0][-1]))
 
 
     #st.write(attack_prob, 'attack_prob')
+    if group_size > 2:
+        if attacking_status != 'attacked':
+            attack_prob_percent = .25
+            attack_prob_percent = attack_prob_percent * ((20/len_left) ** (favorit/5))**0.5
+            #st.write(rider, 'attack_prob', attack_prob_percent)
+            attack_prob_percent = attack_prob_percent / (best_sel_card)
+            #st.write(rider, '1attack_prob', attack_prob_percent)
+            attack_prob_percent = attack_prob_percent / (group ** 1.45 )
+            #st.write(rider, '2attack_prob', attack_prob_percent)
+            attack_prob_percent = attack_prob_percent / (max(1,sv)**(favorit/5))
+            #st.write(rider, '3attack_prob', attack_prob_percent, (max(1,sv)**(favorit/5)))
+            attack_prob_percent = attack_prob_percent / len(df) * 9
+            attack_prob_percent = attack_prob_percent * (mentalitet / 4)
+            attack_prob_percent = attack_prob_percent * fb_ratio
 
-    if attacking_status != 'attacked':
-        attack_prob_percent = 50 / (len_left * favorit)
-        attack_prob_percent = attack_prob_percent / (best_sel_card)
-        attack_prob_percent = attack_prob_percent / (group ** 1.45 / (1 + 0.1 * favorit))
-        attack_prob_percent = attack_prob_percent / max(1,get_slipstream_value(st.session_state.cards[rider]['position'], st.session_state.cards[rider]['position']+8, track))
-        attack_prob_percent = attack_prob_percent / len(df) * 9
-        #attack_prob_percent = attack_prob_percent * ((group_size ** 1.5)/2
-        attack_prob = int(1/attack_prob_percent) + 1
 
-        #st.write(rider, 'attack_prob', attack_prob)
-        if random.randint(0, attack_prob) == 1:
+            #attack_prob_percent = attack_prob_percent * ((group_size ** 1.5)/2
+            attack_prob = int(1/attack_prob_percent) + 1
 
-                    if group_size > 1:
-                        st.write(rider, 'attacks')
-                        return 2
+
+            #st.write(rider, 'attack_prob', attack_prob)
+            if random.randint(0, attack_prob) == 1:
+
+                        if group_size > 1:
+                            st.write(rider, 'attacks')
+                            return 2
 
     takes_lead = 0
 
@@ -674,7 +1263,7 @@ def takes_lead_fc(rider, df, attacking_status, number_of_teams):
 
     own_riders_ahead_share = (own_riders_ahead+0.1)/(riders_ahead+0.3)
 
-    ratio = ratio + 0.333 - own_riders_ahead_share
+    ratio = ratio + 1/number_of_teams - own_riders_ahead_share
 
     ratio = ratio * ((sdf[sdf.team == team].favorit.min() / favorit) ** fra_team_i_gruppe)
 
@@ -683,9 +1272,14 @@ def takes_lead_fc(rider, df, attacking_status, number_of_teams):
 
     ratio = ratio + random.randint(0, 8) / 100
     ratio = ratio - random.randint(0, 8) / 100
-    ratio = ratio - st.session_state.cards[rider]['takes_lead']*.15
-    if random.random() * (2/number_of_teams) < ratio:
+    ratio = ratio - st.session_state.cards[rider]['takes_lead']*.2
+
+
+    if random.random() < ratio * number_of_teams**1.15:
         takes_lead = 1
+
+    if floating == True:
+        takes_lead = ratio
 
     return takes_lead
 
@@ -693,6 +1287,103 @@ def takes_lead_fc(rider, df, attacking_status, number_of_teams):
 def slipstream_value(cards, track, group):
     return 'ppop'
 
+def human_responsibility(group, human_teams, group_size, teams_in_group, number_of_teams, len_left):
+    print('HUMMANNN')#sdf = df[df['group'] == group]
+
+    responss = []
+
+    for team in human_teams:
+        print(team)
+        chance_tl = 0
+        prob_front = 0
+        prob_team_front = 0
+        prob_group = 0
+        prob_team_back = 0
+        prob_team_group = 0
+        prob_back = 0
+        #team = st.session_state.cards[rider]['team']
+        prob_others_front = 0
+        back_own_team_sh = 0
+        front_own_team_sh = 0
+        team_members_in_group = 0
+
+        for rider2 in st.session_state.cards:
+            #print(rider2)
+            if st.session_state.cards[rider2]['group'] == group:
+
+                if team in st.session_state.cards[rider2]['team']:
+             #       print(rider2)
+                    prob_team_group = prob_team_group + st.session_state.cards[rider2]['win_chance'] / 100
+                    prob_group = prob_group + st.session_state.cards[rider2]['win_chance'] / 100
+                    team_members_in_group = team_members_in_group + 1
+                else:
+                    prob_group = prob_group + st.session_state.cards[rider2]['win_chance'] / 100
+            if st.session_state.cards[rider2]['group'] < group:
+                if team in st.session_state.cards[rider2]['team']:
+                    prob_team_front = prob_team_front + st.session_state.cards[rider2]['win_chance'] / 100
+                    prob_front = prob_front + st.session_state.cards[rider2]['win_chance'] / 100
+                else:
+                    prob_front = prob_front + st.session_state.cards[rider2]['win_chance'] / 100
+            if st.session_state.cards[rider2]['group'] > group:
+                if team in st.session_state.cards[rider2]['team']:
+                    prob_team_back = prob_team_back + st.session_state.cards[rider2]['win_chance'] / 100
+                    prob_back = prob_back + st.session_state.cards[rider2]['win_chance'] / 100
+                else:
+                    prob_back = prob_back + st.session_state.cards[rider2]['win_chance'] / 100
+        #print(rider, prob_group, prob_back, prob_front, prob_team_group)
+
+        prob_teammembers_in_group = prob_team_group / 100
+        # st.write()
+        #helping_team = prob_team_group / (st.session_state.cards[rider]['win_chance'] / 100)
+
+
+
+        prob_team_group_share = prob_team_group  / prob_group
+
+        chance_tl = 0
+        # helping team, høj hvis man er meget hjælperytter
+
+        try:
+            front_own_team_sh = prob_team_front / (prob_front + 0.1)
+        except:
+            print('no')
+        try:
+            back_own_team_sh = prob_team_back / (prob_back + 0.1)
+        except:
+            print('no')
+
+
+
+        ####CALCULATE TAKE LEAD
+        if prob_team_group_share > front_own_team_sh:
+            # høj hvis man er favorit i gruppen
+            print(prob_team_group_share, prob_team_front, st.session_state.number_of_teams)
+            chance_tl = ((prob_team_group_share - prob_team_front) * st.session_state.number_of_teams) ** 2
+            print(chance_tl)
+
+
+
+
+            # høj hvis man er hjælperytter i gruppen
+
+
+
+            # up hvis man har mange holdkammerater i gruppen
+            chance_tl = chance_tl * ((team_members_in_group) / (group_size / teams_in_group))
+            print(chance_tl)
+            # op hvis dem foran eller bagved har høj sandsynlighed
+            chance_tl = chance_tl * (max(1 / number_of_teams, prob_front - prob_team_front * number_of_teams,
+                                         prob_back - prob_team_back * number_of_teams) * number_of_teams) ** 2
+
+            print(chance_tl)#chance_tl = chance_tl * (1 - st.session_state.cards[rider]['fatigue']) ** 0.5
+            #chance_tl = chance_tl * min(1, 7 / best_sel_card) ** 2
+
+            chance_tl = chance_tl * (60 / len_left) ** 0.5
+            print(chance_tl)
+        responss.append(chance_tl)
+
+    print('END HUMAN')
+    return max(responss)
 
 def nyehold(df, track, number_of_teams, riders_per_team, puncheur, same=False):
     #global cards
@@ -745,8 +1436,19 @@ def nyehold(df, track, number_of_teams, riders_per_team, puncheur, same=False):
     rdf['index'] = range(1,1+peloton_size)
     rdf['ECs'] = 0
     rdf['prel_time'] = 100000
+    rdf['win_chance'] = 0
 
     riders = rdf.NAVN.tolist()
+    brosten_factor = 0
+
+    if track[-1] == 'B':
+        col1.write('Brosten')
+        brosten_factor = 1
+
+    fladbrosten = 0
+    if track[-1] == '*':
+        fladbrosten = 1
+        st.session_state['hill_type'] = 'pave'
 
     track = track[0:track.find('F')+1]
 
@@ -757,12 +1459,27 @@ def nyehold(df, track, number_of_teams, riders_per_team, puncheur, same=False):
     cards = {}
     i = -1
     udbrud = random.randint(0,peloton_size)
+    udbrud = [udbrud]
+    if peloton_size > 9:
+
+#        udbrud = list(udbrud)
+        udbrud.append(random.randint(0,peloton_size))
 
     longest_hill = get_longest_hill(track)
-    puncheur_factor = min(1, 2 / longest_hill) * puncheur
-    st.write(puncheur_factor)
+    puncheur_factor = min(1, 3 / max(longest_hill,3)) * puncheur
+    col1.write(puncheur_factor)
 
-    rdf['BJERG'] = rdf['BJERG']+rdf['PUNCHEUR']*puncheur_factor
+    if fladbrosten == 1:
+        rdf['BJERG'] = rdf['FLAD'] + rdf['BROSTEN']
+        brosten_factor = 1
+        for t in range(1,16):
+            kolonne1 = 'BJERG'+str(t)
+            kolonne2 = 'FLAD'+str(t)
+            rdf[kolonne1] = rdf[kolonne2]
+    else:
+        rdf['BJERG'] = rdf['BJERG']+rdf['PUNCHEUR']*puncheur_factor + rdf['BROSTEN'] * brosten_factor
+
+
 
     for rider in riders:
         i = i + 1
@@ -773,19 +1490,25 @@ def nyehold(df, track, number_of_teams, riders_per_team, puncheur, same=False):
         cards[rider]['attacking_status'] = 'no'
         cards[rider]['group'] = 2
         cards[rider]['played_card'] = 0
-        cards[rider]['selected_value'] = 0
+        cards[rider]['selected_value'] = -1
         cards[rider]['moved_fields'] = 0
         cards[rider]['sprint'] = rdf.iloc[i]['SPRINT']
+        cards[rider]['bjerg'] = rdf.iloc[i]['BJERG']
         cards[rider]['sprint_points'] = 0
         cards[rider]['ranking'] = 0
-        cards[rider]['takes_lead'] = 1
+        cards[rider]['takes_lead'] = 0
         cards[rider]['noECs'] = 0
         cards[rider]['prel_time'] = 1000000
         cards[rider]['team'] = riderteams[i]
         cards[rider]['fatigue'] = 0
+        cards[rider]['penalty'] = 0
+        cards[rider]['e_moves_left'] = 12
+        cards[rider]['favorit_points'] = 1
+        cards[rider]['win_chance'] = 0
+        cards[rider]['win_chance_wo_sprint'] = 0
 
-        if i == udbrud:
-            cards[rider]['position'] = 5
+        if i in udbrud:
+            cards[rider]['position'] = st.session_state.udbrud_start
             cards[rider]['group'] = 1
 
 
@@ -793,7 +1516,7 @@ def nyehold(df, track, number_of_teams, riders_per_team, puncheur, same=False):
         rpf = int(rdf.iloc[i]['PUNCHEUR'] * puncheur_factor)
 
         l = []
-
+        #lave puncheurkort
         if rpf != 0:
             for k in range(1, 16):
                 if k % (16 / (abs(rpf) + 1)) < 1:
@@ -803,19 +1526,34 @@ def nyehold(df, track, number_of_teams, riders_per_team, puncheur, same=False):
         else:
             l = [0]*15
 
+        m = []
+        if brosten_factor == 1:
+            rpf = rdf.iloc[i]['BROSTEN']
+            for k in range(1, 16):
+                if k % (16 / (abs(rpf) + 1)) < 1:
+                    m.append(int(rpf / abs(rpf)))
+                else:
+                    m.append(0)
+
+        else:
+            m = [0]*15
+
+
+
+
         #st.write(rider, rpf, l)
         for j in range(15):
-            if i == udbrud:
+            if i in udbrud:
                 if j == 5:
                     cards[rider]['cards'].append(['kort: 16', 2, 2])
                 if j == 10:
                     cards[rider]['cards'].append(['kort: 16', 2, 2])
                 else:
                     cards[rider]['cards'].append(
-                        ['kort: ' + str(j + 1), int(rdf.iloc[i, 17 + j]), int(rdf.iloc[i, 32 + j])+l[j]])
+                        ['kort: ' + str(j + 1), int(rdf.iloc[i, 18 + j]), int(rdf.iloc[i, 33 + j])+l[j]+m[j]])
 
             else:
-                cards[rider]['cards'].append(['kort: ' + str(j + 1), int(rdf.iloc[i, 17 + j]), int(rdf.iloc[i, 32 + j]) +l[j] ])
+                cards[rider]['cards'].append(['kort: ' + str(j + 1), int(rdf.iloc[i, 18 + j]), int(rdf.iloc[i, 33 + j]) +l[j] + m[j]])
 
 
 
@@ -825,11 +1563,19 @@ def nyehold(df, track, number_of_teams, riders_per_team, puncheur, same=False):
 
     #assign favorit
     track21 = min(get_value(track), 7) / max(get_value(track), 7)
-    rdf['fav_points'] = (rdf['BJERG'] - 60) * get_value(track) * get_longest_hill(track)**0.5+ rdf[
-        'SPRINT'] * 15 + (rdf['BJERG 3'] - 21) * 2 * get_value(track[-15::]) + (rdf['BJERG 3'] - 21) * 3 * track21 + (rdf['FLAD']+rdf['SPRINT']-65) * (50 / (get_value(track[-17::])+1) )
+    rdf['fav_points'] = 0.5 * (rdf['BJERG'] - 60) * get_value(track) * get_longest_hill(st.session_state.track) ** 0.5 + \
+                        rdf['SPRINT'] * 15 + (rdf['BJERG 3'] - 21) * 1 * get_value(track[-15::]) + (
+                        rdf['BJERG 3'] - 21) * 3 * track21 + (rdf['FLAD'] + rdf['SPRINT'] * 4 - 65) * (
+                        15 / (get_value(track[-17::]) + 1))
     rdf = rdf.sort_values(by='fav_points', ascending=True)
     rdf['favorit'] = range(1, peloton_size+1)
     rdf['favorit'] = rdf['favorit'] / (peloton_size/9)
+
+    rdf['sprint2'] = (rdf['SPRINT']+2)**1.5
+    for rider in riders:
+        cards[rider]['sprint_chance'] = (cards[rider]['sprint']+2)**1.5 / rdf['sprint2'].sum()
+
+
     gcdf = rdf.copy()
     gcdf['prel_time'] = 1000
     st.dataframe(rdf)
@@ -867,31 +1613,32 @@ def write_situation():
                 st.markdown(str(minimum) + ':   ' + colour_track(st.session_state['track'][minimum:minimum + 10]))
                 st.text('')
                 riders = \
-                st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='position', ascending=False)[
+                st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='win_chance', ascending=False)[
                     'NAVN'].tolist()
                 positions = \
-                st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='position', ascending=False)[
+                st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='win_chance', ascending=False)[
                     'position'].tolist()
                 ECs = \
-                st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='position', ascending=False)[
+                st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='win_chance', ascending=False)[
                     'ECs'].tolist()
                 takes_lead = \
-                st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='position', ascending=False)[
+                st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='win_chance', ascending=False)[
                     'takes_lead'].tolist()
                 teams = \
-                    st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='position',
+                    st.session_state.rdf[st.session_state.rdf['group'] == i].sort_values(by='win_chance',
                                                                                          ascending=False)[
                         'team'].tolist()
 
                 for i in range(len(riders)):
-                    if ECs[i] > 0:
+                    try:
+                        if st.session_state.cards[riders[i]]['takes_lead'] == 1:
 
-                        st.write(riders[i] + ' . ' + str(positions[i]) + ' (' + teams[i] + ')' + ' :red[takes ' + str(
-                            int(ECs[i])) + ' ECs]')
+                            st.caption(riders[i] + ' . ' + str(positions[i]) + ' (' + teams[i] + ')' + ' :blue[takes lead] - ' + str(int(st.session_state.cards[riders[i]]['win_chance']))+'%')
 
-                    else:
-                        st.caption(riders[i] + ' . ' + str(positions[i]) + ' (' + teams[i] + ')')
-                    #if takes_lead[i] == 1:
+                        else:
+                            st.caption(riders[i] + ' . ' + str(positions[i]) + ' (' + teams[i] + ') - ' + str(int(st.session_state.cards[riders[i]]['win_chance']))+'%')
+                    except:
+                        pass#if takes_lead[i] == 1:
                         #st.caption(':blue[takes the lead]')
 
 
@@ -910,6 +1657,15 @@ col2.write('------------')
 col3.title('Situation')
 col3.write('------------')
 col4.title('Round actions')
+col4.caption('Take lead = 1TK')
+col4.caption('Kort 1-2 = 1MK, Kort 3-5 = 1TK')
+col4.caption('Max 1 penalty')
+col4.caption('length = 63=200km + 1 pr 10')
+col4.caption('ingen angreb hvis 2 i gruppen')
+#col4.caption('sv 50% på flad')
+col4.caption('Angreb koster 2MK + spillet kort')
+col4.caption('nedad slipstream = 1, min 5')
+#col4.caption('flad = sv 50%')
 col4.write('------------')
 col5.title('The Riders')
 #col4.subheader('and their stats')
@@ -922,7 +1678,7 @@ col5.write('------------')
 #track = '^^1---------^^^^3__------------^^^^^^^^^4------^^^^^2_----^^1-----FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'
 track = st.session_state['track']
 track2 = colour_track(st.session_state['track'][0:st.session_state['track'].find('F')+1])
-#human_chooses_cards = False
+#human__cards = False
 computer_chooses_cards = False
 ready_for_calculate = False
 
@@ -977,8 +1733,11 @@ def generate():
                 colour = '#c809b8'
                 text = text + '--SV0'
             if track[i] == '2':
-                colour = '#999999'
+                colour = '#994444'
                 text = text + '--SV2'
+            if track[i] == '3':
+                colour = '#999999'
+                text = text + '--SV3'
             if track[i] == 'F':
                 colour = '#ffc30b'
             #else:
@@ -1088,7 +1847,7 @@ if st.session_state.sprint_groups:
             else:
                 col3.write(str(result[0]) + '. ' + result[1] + ' (' + result[2] + ') ')
 
-tracks = ['sprinttest', 'World Championship 2019 (Yorkshire)','Liege-Bastogne-Liege', 'Bemer Cyclassics', 'Hautacam','Giro DellEmilia', 'GP Industria', 'UAE Tour', 'Kiddesvej', 'Kassel-Winterberg', 'Allerød-Køge', 'bjerg-flad', 'Askersund-Ludvika']
+tracks = ['sprinttest', 'World Championship 2019 (Yorkshire)','Liege-Bastogne-Liege', 'Bemer Cyclassics', 'Hautacam','Giro DellEmilia', 'GP Industria', 'UAE Tour', 'Kiddesvej', 'Kassel-Winterberg', 'Allerød-Køge', 'bjerg-flad', 'Askersund-Ludvika', 'Amstel Gold Race', 'Parma-Genova','FlandernRundt','BrostensTest','random']
 
 if st.session_state.game_started == False:
     st.session_state['trackname'] = col1.radio('start new race', tracks)
@@ -1097,8 +1856,10 @@ if st.session_state.game_started == False:
     riders_per_team = st.text_input('choose number of riders in each team', value=3)
 
     number_of_teams = st.text_input('choose number of teams', value=3)
-    shorten_track = st.text_input('shorten_track', value=0)
+    st.session_state.udbrud_start = st.text_input('udbrud start', value=5)
+    st.session_state.udbrud_start = int(st.session_state.udbrud_start)
     st.session_state.number_of_teams = int(number_of_teams)
+    shorten_track = '0'
     riders_per_team = int(riders_per_team)
     if checkbxtrack:
         #st.session_state.level = col1.slider('Level', -10, 10, 0, 1)
@@ -1110,36 +1871,53 @@ if st.session_state.game_started == False:
             #elif st.session_state['trackname'] == 'Amstel Gold Race':
             #    st.session_state['track'] = '-------^3------*2--^4--***2-----------*2-----^^3------^3-------FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'
         if st.session_state['trackname'] == 'Liege-Bastogne-Liege':
-            st.session_state['track'] = '2211111___222222222111222222222200000_2222222222222211122222222222222FFFFFFFFF'
+            st.session_state['track'] = '3311111___333333333111333333333300000_3333333333333311133333333333333FFFFFFFFF'
         elif st.session_state['trackname'] == 'World Championship 2019 (Yorkshire)':
-            st.session_state['track'] = '22222222222211222222222222221122222222222222112222222222222211222222FFFFFFFFF'
-        elif st.session_state['trackname'] == 'Bjerg-Flad':
-            st.session_state['track'] = '111111111111___2222222222222222222222222222222222222222222222FFFFFFFFFFFFF'
+            st.session_state['track'] = '33333333333311333333333333331133333333333333113333333333333311333333FFFFFFFFF'
+        elif st.session_state['trackname'] == 'bjerg-flad':
+            st.session_state['track'] = '11111111111111111___33333333333333333333333333333333333333333FFFFFFFFFFFFF'
         elif st.session_state['trackname'] == 'Bemer Cyclassics':
-            st.session_state['track'] = '2222222222222222222222222222212222211222222211222222222222222222FFFFFFFFFFFFF'
+            st.session_state['track'] = '3333333333333333333333333333313333311333333311333333333333333333FFFFFFFFFFFFF'
 
         elif st.session_state['trackname'] == 'Hautacam':
-            st.session_state['track'] = '222111111111111111_______222221111111111111000000111111111111FFFFFFFFF'
+            st.session_state['track'] = '331111111111111111_______333331111111111111000000111111111111FFFFFFFFF'
         elif st.session_state['trackname'] == 'Giro DellEmilia':
             st.session_state['track'] = '___1111111_11___1111111_11___1111111_11___1111111_11___1111111FFFFFFFFFF'
         elif st.session_state['trackname'] == 'sprinttest':
             st.session_state['track'] = '111111FFFFFFFFFF'
         elif st.session_state['trackname'] == 'GP Industria':
-            st.session_state['track'] = '2222222222222111111__222222222222222222222222111111__22222222222FFFFFFFFFFFFF'
+            st.session_state['track'] = '3333333333333111111__333333333333333333333333111111__33333333333FFFFFFFFFFFFF'
         elif st.session_state['trackname'] == 'Kassel-Winterberg':
-            st.session_state['track'] = '222222222222222222222222222222221111111122222222222222__1111111222FFFFFFFFFFFFF'
+            st.session_state[
+                'track'] = '333333333333333333333333333333331111111133333333333333__1111111333FFFFFFFFFFFFF'
         elif st.session_state['trackname'] == 'Askersund-Ludvika':
             st.session_state[
-                'track'] = '22222222222222222222222222222222222222222222222222221111__22222FFFFFFFFFF'
+                'track'] = '3333333333333333333333333333333333333333333333333333331111__33333FFFFFFFFFFFFFFF'
         elif st.session_state['trackname'] == 'UAE Tour':
             st.session_state[
-                'track'] = '2222222222222222222222222222222222222222111111111111111111111FFFFFFFFFF'
+                'track'] = '33333333332222222221111111111111111111111111111111111111FFFFFFFFFF'
         elif st.session_state['trackname'] == 'Kiddesvej':
             st.session_state[
-                'track'] = '22222222222222211222222222220022222222222002222222222222200FFFFFFFFFFFFF'
+                'track'] = '33333333333333311333333333330033333333333003333333333333300FFFFFFFFFFFFF'
         elif st.session_state['trackname'] == 'Allerød-Køge':
             st.session_state[
-                'track'] = '2222222222222222222222222222222222222222222222222222222222222FFFFFFFFFF'
+                'track'] = '3333333333333333333333333333333333333333333333333333333333333FFFFFFFFFF'
+        elif st.session_state['trackname'] == 'Amstel Gold Race':
+            st.session_state[
+                'track'] = '33333333333113333113311330000333333333333003333311133333322333333FFFFFFFFFF'
+        elif st.session_state['trackname'] == 'Parma-Genova':
+            st.session_state[
+                'track'] = '33222222222___3333333333111111111__333333333333333333333333FFFFFFFFFFFF'
+        elif st.session_state['trackname'] == 'FlandernRundt':
+            st.session_state[
+                'track'] = '3333330033333311332233333333333330033333333331113333330033333333333FFFFFFFFFFFFFFB'
+        elif st.session_state['trackname'] == 'BrostensTest':
+            st.session_state[
+                'track'] = '3333330033333311332233333333333330033333333331113333330033333333333FFFFFFFFFFFFFF*'
+        elif st.session_state['trackname'] == 'random':
+            st.session_state[
+                'track'] = get_random_track()
+
 
         st.session_state['track'] = st.session_state['track'][int(shorten_track)::]
         track2 = colour_track(st.session_state['track'][0:st.session_state['track'].find('F') + 1])
@@ -1285,7 +2063,10 @@ def get_penalty(rider):
 
 
 def get_pull_value(_list, sv):
-    if sv > 1:
+    if _list == []:
+        return 0, 0
+
+    if sv > 2:
         try:
             a = heapq.nlargest(2, _list)[1]
             if a == 0:
@@ -1298,6 +2079,7 @@ def get_pull_value(_list, sv):
                     return a[0],1
 
 
+
         except:
             return _list[0],1
     else:
@@ -1307,16 +2089,20 @@ def get_pull_value(_list, sv):
 
 
 
-def choose_card_to_play(cards, sv, penalty, speed, chosen_value):
+def choose_card_to_play(cards, sv, penalty, speed, chosen_value, extra = False):
+    with col4:
+        st.write('potential cards: ', cards[0:4])
     cards.append(['tk_extra 15', 2,2])
     chosen_card = False
+    best_sel_card = 15
+    #penalty = 0
     if chosen_value > 0:
         managed = True
 
-        for card in cards:
-            if sv > 1:
+        for card in cards[0:4]:
+            if sv > 2:
                 card_value = card[1] - penalty
-            elif sv<2:
+            elif sv<3:
                 card_value = card[2] - penalty
             if card_value  == chosen_value:
 
@@ -1324,25 +2110,26 @@ def choose_card_to_play(cards, sv, penalty, speed, chosen_value):
                     if int(card[0][-2:-1] + card[0][-1]) > sel_card_number:
                         chosen_card = card
                         sel_card_number = int(card[0][-2:-1] + card[0][-1])
+                        best_sel_card = min(sel_card_number, best_sel_card)
 
                     else:
                         p = 0
                 else:
                     chosen_card = card
                     sel_card_number = int(card[0][-2:-1] + card[0][-1])
-
-
-
-
+                    best_sel_card = min(sel_card_number, best_sel_card)
 
 
 
     if chosen_value == 0:
-        for card in cards:
+        if st.session_state.hill_type == 'pave':
+            len_left = track.find('F') - st.session_state.cards[rider]['position']
+            speed = 20/len_left + speed
+        for card in cards[0:4]:
             managed = True
-            if sv > 1:
+            if sv > 2:
                 card_value = card[1] - penalty
-            elif sv<2:
+            elif sv<3:
                 card_value = card[2] - penalty
             if card_value + sv  >= speed:
                 if chosen_card:
@@ -1358,27 +2145,55 @@ def choose_card_to_play(cards, sv, penalty, speed, chosen_value):
 
 
     if not chosen_card:
+        if extra == True:
+            best_sel_card = 100
+
+
+            for card in cards[0:4]:
+                sel_card_number = int(card[0][-2:-1] + card[0][-1])
+                best_sel_card = min(sel_card_number, best_sel_card)
+
+            col1.write('klarede den ikke. bedste kort:' + str(best_sel_card))
+
+            if best_sel_card > 5:
+                col1.write('takes two extra ccards')
+                sel_card_number = 210
+                for card in cards[0:6]:
+                    if int(card[0][-2:-1] + card[0][-1]) < sel_card_number:
+                        chosen_card = card
+                        sel_card_number = int(card[0][-2:-1] + card[0][-1])
+
+                return chosen_card, managed, 2
+
+        #if best_sel_card > 5:
+
+
+
         managed = False
         sel_card_number = 210
-        for card in cards:
+        for card in cards[0:4]:
             if int(card[0][-2:-1] + card[0][-1]) < sel_card_number:
                 chosen_card = card
                 sel_card_number = int(card[0][-2:-1] + card[0][-1])
 
-    return chosen_card, managed
+    return chosen_card, managed, 0
 
 def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, chosen_card, chosen_value, track, pull_value, riders_pulling):
-    if sv == 2:
-        sv = 3
+    pull_value = max(pull_value,2)
+    new_minus = rider['moved_fields']
+
+    sv2 = sv
+    #if sv == 3:
+    #    sv2 = int(speed/2) #50%
+        #st.write(sv)
+
+
 
     with col4:
         st.write(ridername, 'sv ', sv, 'gruppefart1 ', gruppefart1, 'speed ', speed, 'groups_new_positions[0][0] ',
-                 groups_new_positions[0][0])
+                 groups_new_positions[0][0], 'chosen value:', chosen_value)
 
-        if rider['attacking_status'] == 'attacker':
-            if track[rider['position'] + speed] == 'F':
-                rider['position'] = rider['position'] - 1
-                st.write('attacking over finishing line')
+
 
         penalty = get_penalty(ridername)
         # st.write(ridername, 'penalty:', penalty)
@@ -1387,19 +2202,25 @@ def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, 
             col1.write(':red[penalty: ' + str(penalty) + ']')
 
         speed = groups_new_positions[0][0] - rider['position']
+
+
         st.write('speed:', speed, ' sv: ', sv, 'rider pos. bef. ', rider['position'])
         st.write(groups_new_positions)
+        if rider['attacking_status'] == 'attacker':
+            if track[rider['position'] + speed] == 'F':
+                speed = speed - 1
+                st.write('attacking over finishing line')
         riders_starting_position = rider['position']
         st.write('selected_value', chosen_value)
         speed2 = speed
         if track[rider['position']] == '_':
-
             speed2 = max(5, speed2)
+            #NYNEDAD speed2 = max(5, speed2)
         rider['takes lead'] = 0
         #managed = True
         managed = False
 
-        if sv > 1:
+        if sv > 2:
             # Does the rider take lead on flat?
 
             if chosen_value >= pull_value:
@@ -1417,21 +2238,21 @@ def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, 
                 # hvilket kort vælger han
             if not chosen_card:
 
-                chosen_card, managed = choose_card_to_play(rider['cards'][0:4], sv, penalty, speed, chosen_value)
+                chosen_card, managed, new_minus = choose_card_to_play(rider['cards'][0:6], sv2, penalty, speed, chosen_value, False)
                 st.write('selects(sv2):', chosen_card, managed)
                 if track[rider['position']] == '_':
                     chosen_card[1] = max(chosen_card[1],5)
 
 
             sel_card_number = int(chosen_card[0][-2:-1] + chosen_card[0][-1])
-            if chosen_card[1] + sv- penalty >= speed:
+            if chosen_card[1] + sv2 - penalty >= speed:
                 managed = True
                 rider['position'] = rider['position'] + speed
                 st.write('speed', speed)
                 st.write('new position', rider['position'], 'SV2')
 
-        if sv <= 1:
-            st.write('sv<=1')
+        if sv <= 2:
+            st.write('sv<=2')
             selected = False
             if chosen_value == pull_value:
                 sv = 0
@@ -1445,7 +2266,7 @@ def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, 
             # vælg kortet
 
             if not chosen_card:
-                chosen_card, managed = choose_card_to_play(rider['cards'][0:4], sv, penalty, speed, chosen_value)
+                chosen_card, managed, new_minus = choose_card_to_play(rider['cards'][0:4], sv2, penalty, speed, chosen_value, False)
                 if track[rider['position']] == '_':
                     chosen_card[2] = max(chosen_card[2], 5)
 
@@ -1453,41 +2274,41 @@ def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, 
                 managed = True
                 rider['position'] = rider['position'] + speed
                 st.write('speed', speed)
-                st.write('new position', rider['position'], 'SV1')
+                st.write('new position', rider['position'])
 
-            st.write('selects(sv1):', chosen_card, managed)
+            st.write('selects(sv1or2):', chosen_card, managed)
 
         st.write('selected?', chosen_card)
         sel_card_number = int(chosen_card[0][-2:-1] + chosen_card[0][-1])
         rider['played_card'] = chosen_card
 
-        if 'F' in track[riders_starting_position:rider['position']]:
-            rider['position'] = rider['position']-1
+        #if 'F' in track[riders_starting_position:rider['position']]:
+        #    rider['position'] = rider['position']-1
         #if not managed:
 
-        if sv > 1:
-            value = chosen_card[1] - penalty + sv
+        if sv > 2:
+            value = chosen_card[1] - penalty + sv2
 
-        if sv < 2:
+        if sv < 3:
             value = chosen_card[2] - penalty + sv
 
         if track[rider['position']] == '_':
-            value = 5 - penalty
+            value = 5
 
         pot_position = min(rider['position'] + value, groups_new_positions[0][0])
-        pot_position_wo_sv = pot_position-sv
+        pot_position_wo_sv = pot_position-sv2
         new_pot_position = pot_position_wo_sv
 
         for groups_position in groups_new_positions:
             if pot_position >= groups_position[0]:
-                st.write('try position:', pot_position, 'to', groups_position, '(', groups_position[1])
-                new_pot_position = max(groups_position[0], pot_position_wo_sv)
-                st.write(pot_position, 'after trying')
+                #st.write('try position:', pot_position, 'to', groups_position, '(', groups_position[1])
+                new_pot_position = max(groups_position[0], new_pot_position, pot_position_wo_sv)
+                #st.write(pot_position, 'after trying')
 
-        if new_pot_position > rider['position'] :
+        if new_pot_position > rider['position']:
 
             rider['position'] = new_pot_position
-            st.write('new new position', rider['position'])
+            #st.write('new new position', rider['position'])
 
         for card in rider['cards'][0:4]:
             rider['discarded'].append(card)
@@ -1498,7 +2319,16 @@ def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, 
             rider['discarded'].remove(['TK-1: 99', -1, -1])
             rider['discarded'].append(['kort: 16', 2, 2])
 
+        if new_minus == 2:
+            col1.subheader('new minus = ' + str(new_minus))
+            for card in rider['cards'][0:2]:
+                rider['discarded'].append(card)
+                rider['cards'].remove(card)
 
+            rider['cards'].insert(0, ['TK-1: 99', -1, -1])
+            rider['discarded'].append(['TK-1: 99', -1, -1])
+            sel_card_number = 16
+            rider['penalty'] = 2 + rider['penalty']
 
         #### TEST STOP
         try:
@@ -1510,7 +2340,12 @@ def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, 
         st.write('sel_card_number:', sel_card_number)
 
         ecs = int(takes_lead)
+
+        if rider['attacking_status'] == 'attacker':
+            takes_lead = False
+
         if takes_lead:
+            col1.write('TAKES LEAD')
             ecs = 1
 
             if sel_card_number < 6:
@@ -1519,31 +2354,40 @@ def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, 
 
 
 
-        if sel_card_number > 10 and riders_pulling < 2:
-            ecs = 0
+            #if sel_card_number > 10 and riders_pulling < 2:
+            #    ecs = 0
 
 
         if not takes_lead:
+            rider['takes_lead'] = 0
+            st.write('doesnot take lead')
             #if sv < 2:
             if sel_card_number < 6:
                 ecs = 1
 
         #ecs = ecs + penalty
+        #Forslag STÆRKT
         if rider['attacking_status'] == 'attacker':
+            rider['takes_lead'] = 0
             ecs = 0
+        if rider['attacking_status'] != 'attacker':
+            if ecs > 0:
+                rider['cards'].insert(0, ['kort: 16', 2, 2])
+                st.write(ridername + 'takes' + str(ecs) + 'ECs')
+            if ecs > 1:
+                rider['discarded'].append(['kort: 16', 2, 2])
 
-        if ecs > 0:
-            rider['cards'].insert(0, ['kort: 16', 2, 2])
-            st.write(ridername + 'takes' + str(ecs) + 'ECs')
-        if ecs > 1:
-            rider['discarded'].append(['kort: 16', 2, 2])
-
-        if sel_card_number < 3:
-            if rider['attacking_status'] != 'attacker':
+            if sel_card_number < 3:
+                #if rider['attacking_status'] != 'attacker':
                 rider['cards'].insert(0, ['TK-1: 99', -1, -1])
                 rider['cards'].remove(['kort: 16', 2, 2])
+                rider['penalty'] = 1 + rider['penalty']
 
-        if len(rider['cards']) < 4:
+        
+
+
+
+        if len(rider['cards']) < 6:
             # st.write('shuffling riders cards')
             random.shuffle(rider['discarded'])
             for card in rider['discarded']:
@@ -1551,6 +2395,9 @@ def move_riders(ridername, sv, rider, gruppefart1, speed, groups_new_positions, 
             rider['discarded'] = []
 
         groups_new_positions.append([rider['position'], sv])
+        rider['moved_fields'] = 0
+
+
 
     return rider, groups_new_positions
 
@@ -1569,11 +2416,12 @@ def get_investment(team, groupy):
         if st.session_state.cards[rider]['team'] == team:
             #st.write(rider)
             if st.session_state.cards[rider]['group'] == groupy:
-                a = takes_lead_fc(rider, st.session_state.rdf, st.session_state.cards[rider]['attacking_status'], st.session_state.number_of_teams)
+                a = takes_lead_fc(rider, st.session_state.rdf, st.session_state.cards[rider]['attacking_status'], st.session_state.number_of_teams, False, False)
                 if sum(investment) > 1:
                     a = 0
                 a = a * random.randint(0,1)
                 a = a * a*random.randint(1,2)
+
                 if a > 0:
                     riders_investing.append(rider)
                 investment.append(a)
@@ -1629,11 +2477,41 @@ if st.session_state.group_to_move < 1:
         st.session_state.team_to_choose = st.session_state.teams[int(st.session_state.round) % st.session_state.number_of_teams]
 
         st.session_state.groups_new_positions = []
-        st.session_state['confirmcards'] = [False] * (st.session_state.group_to_move+10)
+        st.session_state['confirmcards'] = [False] * (st.session_state.group_to_move+20)
         st.session_state.rdf, st.session_state.cards = assign_new_group_numbers(st.session_state.rdf, st.session_state.cards)
         st.session_state.cards = set_all_to_no_attackers(st.session_state.cards)
         st.session_state.sprint_groups = detect_sprint_groups(st.session_state.rdf)
+        for rider in st.session_state.cards:
+            st.session_state.cards[rider]['fatigue'] = get_fatigue(st.session_state.cards[rider])
+            #col4.write(rider + 'fatigue:' + str(st.session_state.cards[rider]['fatigue']))
+            st.session_state.cards[rider]['e_moves_left'] = get_e_move_left(st.session_state.cards[rider], st.session_state.cards,
+                                                                      st.session_state['track'])
+            #col4.write(rider + 'e_moves_left:' + str( st.session_state.cards[rider]['e_moves_left']))
+            st.session_state.cards[rider]['favorit_points'] = get_favorit_points(st.session_state.cards[rider])
+        factor = 17 - 0.6 * st.session_state['round']
+        total_points = get_total_moves_left(st.session_state.cards, factor)
+        sprint_weight = get_weighted_value(st.session_state.track[st.session_state.rdf.sort_values(by='position', ascending=False).iloc[0].position.tolist()::])
+        sprint_weight = 0.8*(sprint_weight - 1)**2
+        ## new sprint_chance
 
+        track_length = st.session_state.track.find('F')
+        st.session_state.rdf['fields_left'] = track_length - st.session_state.rdf['position']
+        min_pos = st.session_state.rdf.fields_left.min()
+        col1.write('min_pos' + str(min_pos))
+        st.session_state.rdf['sprint2'] = (st.session_state.rdf['SPRINT'] + 3) * ((min_pos / st.session_state.rdf['fields_left'])**2.5)
+        st.session_state.rdf['sprint2'] = st.session_state.rdf['sprint2']**2
+        #col4.dataframe(st.session_state.rdf))
+        st.session_state.rdf['sprint_chance'] = st.session_state.rdf['sprint2'] / st.session_state.rdf['sprint2'].sum()
+        st.session_state.rdf['sprint_chance'] = st.session_state.rdf['sprint_chance'].fillna(1/len(st.session_state.rdf))
+        for rider in st.session_state.cards:
+            st.session_state.cards[rider]['sprint_chance'] = 100 * st.session_state.rdf[st.session_state.rdf['NAVN'] == rider]['sprint_chance'].tolist()[0]
+
+            #col4.write(st.session_state.cards[rider]['sprint_chance'])
+        for rider in st.session_state.cards:
+            st.session_state.cards[rider]['win_chance_wo_sprint'] = get_win_chance_wo_sprint(st.session_state.cards[rider], total_points, factor)
+            st.session_state.cards[rider]['win_chance'] = get_win_chance(st.session_state.cards[rider], total_points,
+                                                                        factor, sprint_weight)
+        #    col4.write(rider + 'win_chance: ' + str(st.session_state.cards[rider]['win_chance']))
         if st.session_state.sprint_groups:
             text = 'Sprint with groups' + str(st.session_state.sprint_groups)
             st.button(text)
@@ -1652,7 +2530,7 @@ if st.session_state.play_round:
     write_situation()
 
 
-    with (col1):
+    with ((col1)):
         #print rider cards
         st.write('ROUND:', str(st.session_state.round))
         st.write('ALL YOUR CARDS')
@@ -1768,15 +2646,17 @@ if st.session_state.play_round:
                     for rider in st.session_state.rdf[(st.session_state.rdf.group == group) & (st.session_state.rdf.team == st.session_state.team_to_choose)].NAVN.tolist():
                         #st.write(st.session_state.cards[rider])
                         if st.session_state.cards[rider]['selected_value'] == -1:
-                            st.session_state.cards[rider]['takes_lead'] = takes_lead_fc(rider, st.session_state.rdf,st.session_state.cards[rider]['attacking_status'], st.session_state.number_of_teams)
+                            st.session_state.cards[rider]['takes_lead'] = takes_lead_fc(rider, st.session_state.rdf,st.session_state.cards[rider]['attacking_status'], st.session_state.number_of_teams, False, True)
+                            print(rider, st.session_state.cards[rider]['takes_lead'])
                             if st.session_state.cards[rider]['takes_lead'] == 2:
 
                                 st.session_state.attackers_in_turn.append(rider)
+                                st.write('Added to attackers in turn')
                                 st.session_state.cards[rider]['takes_lead'] = 0
                                 #st.write('attackers_in_turn:', st.session_state.attackers_in_turn)
 
                             #st.write('takes_lead:', st.session_state.cards[rider]['takes_lead'])
-                            selected = pick_value(st.session_state.cards[rider], st.session_state.track)
+                            selected = pick_value(rider, st.session_state.track, paces)
                         #st.write(selected)
                             #st.write('selected:', selected)
                             st.session_state.cards[rider]['selected_value'] = st.session_state.cards[rider]['takes_lead']*selected
@@ -1785,7 +2665,7 @@ if st.session_state.play_round:
 
                     if len(pace) > 0:
                         paces.extend(pace)
-                        st.write(st.session_state.team_to_choose, 'chooses ',  ", ".join(str(x) for x in pace))
+                        st.write(':green[' , st.session_state.team_to_choose, 'chooses ',  ", ".join(str(x) for x in pace) ,']')
                     else:
                         paces.append(0)
                         st.write(st.session_state.team_to_choose, 'has no riders in the group')
@@ -1835,8 +2715,9 @@ if st.session_state.play_round:
 
             st.write('gruppefart=', gruppefart)
             count = 0
+            sv50 = sv
+            if sv > 2:
 
-            if sv > 1:
 
                 for pace in paces:
                     if pace > gruppefart - 1.5:
@@ -1847,15 +2728,17 @@ if st.session_state.play_round:
             #st.write(count)
                 if count > 1:
                     #hvis fælger
-                    if st.session_state.track[gruppefart+1+group_position] in ['2','F']:
+                    if st.session_state.track[gruppefart+1+group_position] in ['3','F']:
                         gruppefart = 1 + gruppefart
+                
+                #sv50 = int(gruppefart/2) #50%
+                        
+                        
 
-                if gruppefart > 6:
-                    sv = 3
-            sv2 = sv
-            if sv == 2:
-                sv2 = 3
-            st.write('group ' + str(group) + "'s speed is " + str(gruppefart), '. SV is:', str(sv2) + '. You have to move at least' + str(gruppefart-sv2))
+    
+
+    
+            st.write('group ' + str(group) + "'s speed is " + str(gruppefart), '. SV is:', str(sv50) + '. You have to move at least' + str(gruppefart-sv50))
 
             #st.write([gruppefart + group_position, sv], 'gets appended gto groups_new_posts')
             st.session_state.groups_new_positions.append([gruppefart + group_position, sv])
@@ -1866,12 +2749,13 @@ if st.session_state.play_round:
             j = 0
 
             pull_value, riders_pulling = get_pull_value(paces, sv)
-            st.write('pull_value: ', pull_value)
+            #st.write('pull_value: ', pull_value)
 
             st.session_state.team_to_choose = 'Me'
             st.write('choose cards, you played', str(Me_played_value))
             ###ÆNDRE NÆSTE LINIE
             p = -1
+            ok = [False] * 20
             for rider in your_riders_in_group:
                 # st.write(st.session_state.cards[rider])
 
@@ -1885,11 +2769,15 @@ if st.session_state.play_round:
                                           st.session_state.cards[rider]['cards'][2],
                                           st.session_state.cards[rider]['cards'][3],
                                           ['EC-Xtra 15', 2, 2]), key=keystring2)
-                    #if st.checkbox('To kort mere?', value=False, key=keystring2+'2mere'):
-                    #    st.session_state.cards[rider]['played_card'] = col1.radio(
-                    #        'hvilket kort?', (st.session_state.cards[rider]['cards'][4],
-                    #                          st.session_state.cards[rider]['cards'][5],
-                    #                          key= keystring2 + '2mere2')
+                    keystring22 = rider + '2mere2'
+                    ok[p] = st.checkbox('To kort mere?', value=False, key=keystring2+'2mere')
+                    if ok[p] == True:
+                        st.session_state.cards[rider]['played_card'] = col1.radio('hvilket kort?', (st.session_state.cards[rider]['cards'][0],
+                                          st.session_state.cards[rider]['cards'][1],
+                                          st.session_state.cards[rider]['cards'][2],
+                                          st.session_state.cards[rider]['cards'][3], st.session_state.cards[rider]['cards'][4],
+                        st.session_state.cards[rider]['cards'][5]), key = keystring22)
+                        st.session_state.cards[rider]['moved_fields'] = 2
             keystring = str(group) + str(st.session_state.round) + 'confirmcards'
             st.session_state.confirmcards[group] = st.checkbox('confirm', value=False, key=keystring)
 
@@ -1901,9 +2789,10 @@ if st.session_state.play_round:
 
             p = -1
             for rider in your_riders_in_group:#move riders
-            #st.session_state
 
-                #st.write('p=',p)
+
+
+
                 if st.session_state.cards[rider]["group"] == group:
                     p= 1+p
                     st.write(rider, 'has ', get_number_ecs(st.session_state.cards[rider]), ' ecs')
@@ -1923,6 +2812,7 @@ if st.session_state.play_round:
                         ###TEST
 
                         st.session_state.cards[rider]['cards'].insert(0, ['TK-1: 99', -1, -1])
+                        st.session_state.cards[rider]['penalty'] = 2 + st.session_state.cards[rider]['penalty']
                         st.write('..and 2 more TK-1')
 
 
@@ -1978,6 +2868,7 @@ if st.session_state.play_round:
                     if st.session_state.cards[rider]['attacking_status'] == 'attacker':
                         st.session_state.cards[rider]['discarded'].append(['TK-1: 99', -1, -1])
                         st.session_state.cards[rider]['cards'].insert(0, ['TK-1: 99', -1, -1])
+                        st.session_state.cards[rider]['penalty'] = 2 + st.session_state.cards[rider]['penalty']
                         st.write('..and 2 more TK-1')
                         st.session_state.cards[rider]['attacking_status'] == 'no'
                         attacking_group = True
@@ -1987,8 +2878,12 @@ if st.session_state.play_round:
                     k = 1+k
 
             if attacking_group:
+                st.write(get_group_position_from_cards(st.session_state.cards, group),
+                         get_group_position_from_cards(st.session_state.cards, group + 1),
+                         get_group_position_from_cards(st.session_state.cards, group + 1) + sv + 1)
+
                 #if 1 == 2:
-                if get_group_position_from_cards(st.session_state.cards, group) in range(get_group_position_from_cards(st.session_state.cards, group +1), get_group_position_from_cards(st.session_state.cards, group +1) + sv + 1):
+                if get_group_position_from_cards(st.session_state.cards, group) in range(get_group_position_from_cards(st.session_state.cards, group +1) + 1, get_group_position_from_cards(st.session_state.cards, group +1) + sv + 1):
                     st.write('Pull attackers back??')
                     your_invest = st.text_input('how much are you willing to invest?')
                     while your_invest == '':
@@ -2015,13 +2910,16 @@ if st.session_state.play_round:
                         riders_defending = st.text_input('who invests from your team?')
                         for rider in riders_defending.split(','):
                             st.session_state.cards[rider]['cards'].insert(0, ['TK-1: 99', -1, -1])
+                            st.session_state.cards[rider]['penalty'] = 1 + st.session_state.cards[rider]['penalty']
                             st.write(rider, 'takes TK-1')
                         if len(riders_defending.split(',')) < 2 and your_invest == 2:
                             st.session_state.cards[rider]['discarded'].insert(0, ['TK-1: 99', -1, -1])
+                            st.session_state.cards[rider]['penalty'] = 1 + st.session_state.cards[rider]['penalty']
                             st.write(rider, 'and another for the bottom')
 
                     for rider in riders_investing:
                         st.session_state.cards[rider]['cards'].insert(0, ['TK-1: 99', -1, -1])
+                        st.session_state.cards[rider]['penalty'] = 1 + st.session_state.cards[rider]['penalty']
                         st.write(rider, 'takes TK-1')
 
                     if invest > 1:
@@ -2067,7 +2965,7 @@ if st.session_state.play_round:
 
     st.write('finish round')
     st.session_state.rdf = transfer_positions(st.session_state.cards, st.session_state.rdf, False)
-    st.dataframe(st.session_state.rdf)
+    #st.dataframe(st.session_state.rdf)
 
     st.session_state.rdf = transfer_positions(st.session_state.cards, st.session_state.rdf, False)
 
